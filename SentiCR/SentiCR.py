@@ -10,7 +10,7 @@ import csv
 import re
 
 import nltk
-from xlrd import open_workbook
+from openpyxl import load_workbook
 from statistics import mean
 
 
@@ -32,7 +32,7 @@ from imblearn.over_sampling import SMOTE
 
 
 def replace_all(text, dic):
-    for i, j in dic.iteritems():
+    for i, j in dic.items():
         text = text.replace(i, j)
     return text
 
@@ -107,7 +107,7 @@ def expand_contractions(s, contractions_dict=contractions_dict):
      return contractions_regex.sub(replace, s.lower())
 
 
-url_regex = re.compile('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
+url_regex = re.compile(r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+")
 
 def remove_url(s):
     return url_regex.sub(" ",s)
@@ -171,14 +171,20 @@ def handle_negation(comments):
 
 
 def preprocess_text(text):
-    comments = text.encode('ascii', 'ignore')
+    # Ensure we always work with str (not bytes)
+    if text is None:
+        comments = ""
+    elif isinstance(text, bytes):
+        comments = text.decode("utf-8", errors="ignore")
+    else:
+        comments = str(text)
+
     comments = expand_contractions(comments)
     comments = remove_url(comments)
     comments = replace_all(comments, emodict)
     comments = handle_negation(comments)
 
-    return  comments
-
+    return comments
 
 class SentimentData:
     def __init__(self, text,rating):
@@ -237,25 +243,36 @@ class SentiCR:
         Y_train = np.array(training_ratings)
 
         #Apply SMOTE to improve ratio of the minority class
-        smote_model = SMOTE(ratio=0.5, random_state=None, k=None, k_neighbors=15, m=None, m_neighbors=15, out_step=.0001,
-                   kind='regular', svm_estimator=None, n_jobs=1)
-
-        X_resampled, Y_resampled=smote_model.fit_sample(X_train, Y_train)
+        smote_model = SMOTE(sampling_strategy=0.5, k_neighbors=15)
+        X_resampled, Y_resampled = smote_model.fit_resample(X_train, Y_train)
 
         model=self.get_classifier()
         model.fit(X_resampled, Y_resampled)
 
         return model
 
+    # Update: switch to openpyxl from xlrd
     def read_data_from_oracle(self):
-        workbook = open_workbook("oracle.xlsx")
-        sheet = workbook.sheet_by_index(0)
-        oracle_data=[]
+        wb = load_workbook("oracle.xlsx", data_only=True)
+        ws = wb.worksheets[0]  # first sheet
+        oracle_data = []
         print("Reading data from oracle..")
-        for cell_num in range(0, sheet.nrows):
-            comments=SentimentData(sheet.cell(cell_num, 0).value,sheet.cell(cell_num, 1).value)
-            oracle_data.append(comments)
-        return  oracle_data
+
+        for row in ws.iter_rows(values_only=True):
+            # skip completely empty rows
+            if not row or (row[0] is None and row[1] is None):
+                continue
+
+            text = row[0]
+            rating = row[1]
+
+            # if the sheet has a header row, skip it
+            if isinstance(text, str) and text.strip().lower() in ("text", "comment", "comments"):
+                continue
+
+            oracle_data.append(SentimentData(text, rating))
+
+        return oracle_data
 
 
     def get_sentiment_polarity(self,text):
@@ -327,13 +344,18 @@ if __name__ == '__main__':
     print("Algrithm: " + ALGO)
     print("Repeat: " + str(REPEAT))
 
-    workbook = open_workbook("oracle.xlsx")
-    sheet = workbook.sheet_by_index(0)
+    # Update: switch from xlrd
+    wb = load_workbook("oracle.xlsx", data_only=True)
+    ws = wb.worksheets[0]
     oracle_data = []
 
-    for cell_num in range(0, sheet.nrows):
-        comments = SentimentData(sheet.cell(cell_num, 0).value,sheet.cell(cell_num, 1).value)
-        oracle_data.append(comments)
+    for row in ws.iter_rows(values_only=True):
+        if not row or (row[0] is None and row[1] is None):
+            continue
+        text, rating = row[0], row[1]
+        if isinstance(text, str) and text.strip().lower() in ("text", "comment", "comments"):
+            continue
+        oracle_data.append(SentimentData(text, rating))
 
     random.shuffle(oracle_data)
 
