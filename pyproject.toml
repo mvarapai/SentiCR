@@ -1,0 +1,30 @@
+[project]
+name = "senticr-python3-port"
+version = "0.1.0"
+description = "Unofficial Python 3 port of SentiCR for academic use"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-only" }
+
+authors = [
+  { name = "Original SentiCR authors" }
+]
+
+maintainers = [
+  { name = "Mikalai Varapai" }
+]
+
+keywords = [
+  "sentiment-analysis",
+  "software-engineering",
+  "code-review",
+  "SentiCR",
+  "python3-port"
+]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
