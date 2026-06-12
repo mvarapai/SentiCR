@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "senticr-python3-port"
+version = "0.1.0"
+description = "Unofficial Python 3 compatibility port of SentiCR, created as a university student project"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-only"
+
+authors = [
+  { name = "Original SentiCR authors" }
+]
+
+maintainers = [
+  { name = "Mikalai Varapai" }
+]
+
+dependencies = [
+  "numpy",
+  "scikit-learn",
+  "imbalanced-learn",
+  "nltk",
+  "openpyxl",
+]
+
+[tool.setuptools]
+packages = ["SentiCR"]
+
+[tool.setuptools.package-data]
+SentiCR = [
+  "Contractions.txt",
+  "EmoticonLookupTable.txt",
+  "oracle.xlsx",
+]

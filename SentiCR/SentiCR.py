@@ -1,375 +1,429 @@
-from __future__ import print_function
-from sklearn.model_selection import KFold
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import recall_score
-from sklearn.metrics import  precision_score
-from sklearn.metrics import  f1_score
+from __future__ import annotations
 
-import  random
+import argparse
 import csv
+import random
 import re
+from dataclasses import dataclass
+from importlib.resources import as_file, files
+from statistics import mean
+from typing import Iterable
 
 import nltk
-from xlrd import open_workbook
-from statistics import mean
-
-
 import numpy as np
-import argparse
-
-from sklearn.neural_network import MLPClassifier
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.svm import LinearSVC
-from sklearn.linear_model import SGDClassifier
-from sklearn.naive_bayes import BernoulliNB, MultinomialNB
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.ensemble import GradientBoostingClassifier
+from imblearn.over_sampling import SMOTE
+from nltk.stem.snowball import SnowballStemmer
+from openpyxl import load_workbook
 from sklearn.ensemble import AdaBoostClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import SGDClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import recall_score
+from sklearn.model_selection import KFold
+from sklearn.naive_bayes import BernoulliNB
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 
-from nltk.stem.snowball import SnowballStemmer
-from imblearn.over_sampling import SMOTE
+
+PACKAGE_FILES = files("SentiCR")
+CONTRACTIONS_PATH = PACKAGE_FILES / "Contractions.txt"
+EMOTICONS_PATH = PACKAGE_FILES / "EmoticonLookupTable.txt"
+ORACLE_PATH = PACKAGE_FILES / "oracle.xlsx"
 
 
-def replace_all(text, dic):
-    for i, j in dic.iteritems():
-        text = text.replace(i, j)
+def replace_all(text: str, replacements: dict[str, str]) -> str:
+    for old, new in replacements.items():
+        text = text.replace(old, new)
     return text
 
-stemmer =SnowballStemmer("english")
 
-def stem_tokens(tokens):
-    stemmed = []
-    for item in tokens:
-        stemmed.append(stemmer.stem(item))
-    return stemmed
+stemmer = SnowballStemmer("english")
 
-def tokenize_and_stem(text):
+
+def stem_tokens(tokens: Iterable[str]) -> list[str]:
+    return [stemmer.stem(token) for token in tokens]
+
+
+def tokenize_and_stem(text: str) -> list[str]:
     tokens = nltk.word_tokenize(text)
-    stems = stem_tokens(tokens)
-    return stems
+    return stem_tokens(tokens)
 
-mystop_words=[
-'i', 'me', 'my', 'myself', 'we', 'our',  'ourselves', 'you', 'your',
-'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her',
-'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'themselves',
- 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the',
-'and',  'if', 'or', 'as', 'until',  'of', 'at', 'by',  'between', 'into',
-'through', 'during', 'to', 'from', 'in', 'out', 'on', 'off', 'then', 'once', 'here',
- 'there',  'all', 'any', 'both', 'each', 'few', 'more',
- 'other', 'some', 'such',  'than', 'too', 'very', 's', 't', 'can', 'will',  'don', 'should', 'now'
-# keywords
- 'while', 'case', 'switch','def', 'abstract','byte','continue','native','private','synchronized',
- 'if', 'do', 'include', 'each', 'than', 'finally', 'class', 'double', 'float', 'int','else','instanceof',
- 'long', 'super', 'import', 'short', 'default', 'catch', 'try', 'new', 'final', 'extends', 'implements',
- 'public', 'protected', 'static', 'this', 'return', 'char', 'const', 'break', 'boolean', 'bool', 'package',
- 'byte', 'assert', 'raise', 'global', 'with', 'or', 'yield', 'in', 'out', 'except', 'and', 'enum', 'signed',
- 'void', 'virtual', 'union', 'goto', 'var', 'function', 'require', 'print', 'echo', 'foreach', 'elseif', 'namespace',
- 'delegate', 'event', 'override', 'struct', 'readonly', 'explicit', 'interface', 'get', 'set','elif','for',
- 'throw','throws','lambda','endfor','endforeach','endif','endwhile','clone'
+
+mystop_words = [
+    "i", "me", "my", "myself", "we", "our", "ourselves", "you", "your",
+    "yourself", "yourselves", "he", "him", "his", "himself", "she", "her",
+    "herself", "it", "its", "itself", "they", "them", "their", "themselves",
+    "this", "that", "these", "those", "am", "is", "are", "was", "were",
+    "be", "been", "being", "have", "has", "had", "having", "do", "does",
+    "did", "doing", "a", "an", "the", "and", "if", "or", "as", "until",
+    "of", "at", "by", "between", "into", "through", "during", "to", "from",
+    "in", "out", "on", "off", "then", "once", "here", "there", "all", "any",
+    "both", "each", "few", "more", "other", "some", "such", "than", "too",
+    "very", "s", "t", "can", "will", "don", "should", "now",
+
+    # Programming keywords
+    "while", "case", "switch", "def", "abstract", "byte", "continue",
+    "native", "private", "synchronized", "include", "finally", "class",
+    "double", "float", "int", "else", "instanceof", "long", "super",
+    "import", "short", "default", "catch", "try", "new", "final", "extends",
+    "implements", "public", "protected", "static", "return", "char", "const",
+    "break", "boolean", "bool", "package", "assert", "raise", "global",
+    "with", "yield", "except", "enum", "signed", "void", "virtual", "union",
+    "goto", "var", "function", "require", "print", "echo", "foreach",
+    "elseif", "namespace", "delegate", "event", "override", "struct",
+    "readonly", "explicit", "interface", "get", "set", "elif", "for",
+    "throw", "throws", "lambda", "endfor", "endforeach", "endif", "endwhile",
+    "clone",
 ]
 
-#logging.basicConfig(level=logging.INFO,
-#                    format='%(asctime)s %(levelname)s %(message)s')
+
+def load_dictionary(path, delimiter: str = "\t") -> dict[str, str]:
+    with path.open("r", encoding="utf-8") as file:
+        reader = csv.reader(file, delimiter=delimiter)
+        return {row[0]: row[1] for row in reader if len(row) >= 2}
 
 
-emodict=[]
-contractions_dict=[]
+contractions_dict = load_dictionary(CONTRACTIONS_PATH)
+emodict = load_dictionary(EMOTICONS_PATH)
 
 
-# Read in the words with sentiment from the dictionary
-with open("Contractions.txt","r") as contractions,\
-     open("EmoticonLookupTable.txt","r") as emotable:
-    contractions_reader=csv.reader(contractions, delimiter='\t')
-    emoticon_reader=csv.reader(emotable,delimiter='\t')
-
-    #Hash words from dictionary with their values
-    contractions_dict = {rows[0]:rows[1] for rows in contractions_reader}
-    emodict={rows[0]:rows[1] for rows in emoticon_reader}
-
-    contractions.close()
-    emotable.close()
-
-grammar= r"""
+grammar = r"""
 NegP: {<VERB>?<ADV>+<VERB|ADJ>?<PRT|ADV><VERB>}
-{<VERB>?<ADV>+<VERB|ADJ>*<ADP|DET>?<ADJ>?<NOUN>?<ADV>?}
-
+      {<VERB>?<ADV>+<VERB|ADJ>*<ADP|DET>?<ADJ>?<NOUN>?<ADV>?}
 """
+
 chunk_parser = nltk.RegexpParser(grammar)
 
+contractions_regex = re.compile(
+    r"(%s)" % "|".join(re.escape(key) for key in contractions_dict.keys())
+)
 
-contractions_regex = re.compile('(%s)' % '|'.join(contractions_dict.keys()))
+url_regex = re.compile(
+    r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
+)
 
-def expand_contractions(s, contractions_dict=contractions_dict):
-     def replace(match):
-         return contractions_dict[match.group(0)]
-     return contractions_regex.sub(replace, s.lower())
+negation_words = [
+    "not", "never", "none", "nobody", "nowhere", "neither", "barely",
+    "hardly", "nothing", "rarely", "seldom", "despite",
+]
+
+emoticon_words = ["PositiveSentiment", "NegativeSentiment"]
 
 
-url_regex = re.compile('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
+def expand_contractions(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        return contractions_dict[match.group(0)]
 
-def remove_url(s):
-    return url_regex.sub(" ",s)
+    return contractions_regex.sub(replace, text.lower())
 
-negation_words =['not', 'never', 'none', 'nobody', 'nowhere', 'neither', 'barely', 'hardly',
-                     'nothing', 'rarely', 'seldom', 'despite' ]
 
-emoticon_words=['PositiveSentiment','NegativeSentiment']
+def remove_url(text: str) -> str:
+    return url_regex.sub(" ", text)
 
-def negated(input_words):
-    """
-    Determine if input contains negation words
-    """
-    neg_words = []
-    neg_words.extend(negation_words)
-    for word in neg_words:
-        if word in input_words:
-            return True
-    return False
 
-def prepend_not(word):
+def negated(input_words: Iterable[str]) -> bool:
+    return any(word in input_words for word in negation_words)
+
+
+def prepend_not(word: str) -> str:
     if word in emoticon_words:
         return word
-    elif word in negation_words:
+    if word in negation_words:
         return word
-    return "NOT_"+word
+    return "NOT_" + word
 
-def handle_negation(comments):
+
+def handle_negation(comments: str) -> str:
     sentences = nltk.sent_tokenize(comments)
-    modified_st=[]
-    for st in sentences:
-        allwords = nltk.word_tokenize(st)
-        modified_words=[]
-        if negated(allwords):
-            part_of_speech = nltk.tag.pos_tag(allwords,tagset='universal')
-            chunked = chunk_parser.parse(part_of_speech)
-            #print("---------------------------")
-            #print(st)
-            for n in chunked:
-                if isinstance(n, nltk.tree.Tree):
-                    words = [pair[0] for pair in n.leaves()]
-                    #print(words)
+    modified_sentences = []
 
-                    if n.label() == 'NegP' and negated(words):
-                        for i, (word, pos) in enumerate(n.leaves()):
-                            if (pos=="ADV" or pos=="ADJ" or pos=="VERB") and (word!="not"):
-                                modified_words.append(prepend_not(word))
-                            else:
-                                modified_words.append(word)
-                    else:
-                         modified_words.extend(words)
+    for sentence in sentences:
+        words = nltk.word_tokenize(sentence)
+
+        if not negated(words):
+            modified_sentences.append(sentence)
+            continue
+
+        tagged_words = nltk.tag.pos_tag(words, tagset="universal")
+        chunked = chunk_parser.parse(tagged_words)
+        modified_words = []
+
+        for node in chunked:
+            if isinstance(node, nltk.tree.Tree):
+                chunk_words = [pair[0] for pair in node.leaves()]
+
+                if node.label() == "NegP" and negated(chunk_words):
+                    for word, pos in node.leaves():
+                        if pos in {"ADV", "ADJ", "VERB"} and word != "not":
+                            modified_words.append(prepend_not(word))
+                        else:
+                            modified_words.append(word)
                 else:
-                    modified_words.append(n[0])
-            newst =' '.join(modified_words)
-            #print(newst)
-            modified_st.append(newst)
-        else:
-            modified_st.append(st)
-    return ". ".join(modified_st)
+                    modified_words.extend(chunk_words)
+            else:
+                modified_words.append(node[0])
+
+        modified_sentences.append(" ".join(modified_words))
+
+    return ". ".join(modified_sentences)
 
 
+def preprocess_text(text: object) -> str:
+    if text is None:
+        comments = ""
+    elif isinstance(text, bytes):
+        comments = text.decode("utf-8", errors="ignore")
+    else:
+        comments = str(text)
 
-def preprocess_text(text):
-    comments = text.encode('ascii', 'ignore')
     comments = expand_contractions(comments)
     comments = remove_url(comments)
     comments = replace_all(comments, emodict)
     comments = handle_negation(comments)
 
-    return  comments
+    return comments
 
 
+@dataclass
 class SentimentData:
-    def __init__(self, text,rating):
-        self.text = text
-        self.rating =rating
+    text: str
+    rating: int
+
+
+def read_oracle_data() -> list[SentimentData]:
+    with as_file(ORACLE_PATH) as oracle_path:
+        wb = load_workbook(oracle_path, data_only=True)
+
+    ws = wb.worksheets[0]
+    oracle_data = []
+
+    for row in ws.iter_rows(values_only=True):
+        if not row or (row[0] is None and row[1] is None):
+            continue
+
+        text, rating = row[0], row[1]
+
+        if isinstance(text, str) and text.strip().lower() in {
+            "text", "comment", "comments",
+        }:
+            continue
+
+        oracle_data.append(SentimentData(str(text), int(rating)))
+
+    return oracle_data
 
 
 class SentiCR:
-    def __init__(self, algo="GBT", training_data=None):
+    def __init__(self, algo: str = "GBT", training_data: Iterable[SentimentData] | None = None):
         self.algo = algo
-        if(training_data is None):
-            self.training_data=self.read_data_from_oracle()
+
+        if training_data is None:
+            print("Reading data from oracle..")
+            self.training_data = read_oracle_data()
         else:
-            self.training_data = training_data
+            self.training_data = list(training_data)
+
+        self.vectorizer: TfidfVectorizer | None = None
         self.model = self.create_model_from_training_data()
 
-
     def get_classifier(self):
-        algo=self.algo
-
-        if algo=="GBT":
+        if self.algo == "GBT":
             return GradientBoostingClassifier()
-        elif algo=="RF":
-            return  RandomForestClassifier()
-        elif algo=="ADB":
+        if self.algo == "RF":
+            return RandomForestClassifier()
+        if self.algo == "ADB":
             return AdaBoostClassifier()
-        elif algo =="DT":
-            return  DecisionTreeClassifier()
-        elif algo=="NB":
-            return  BernoulliNB()
-        elif algo=="SGD":
-            return  SGDClassifier()
-        elif algo=="SVC":
+        if self.algo == "DT":
+            return DecisionTreeClassifier()
+        if self.algo == "NB":
+            return BernoulliNB()
+        if self.algo == "SGD":
+            return SGDClassifier()
+        if self.algo == "SVC":
             return LinearSVC()
-        elif algo=="MLPC":
-            return MLPClassifier(activation='logistic',  batch_size='auto',
-            early_stopping=True, hidden_layer_sizes=(100,), learning_rate='adaptive',
-            learning_rate_init=0.1, max_iter=5000, random_state=1,
-            solver='lbfgs', tol=0.0001, validation_fraction=0.1, verbose=False,
-            warm_start=False)
-        return 0
+        if self.algo == "MLPC":
+            return MLPClassifier(
+                activation="logistic",
+                batch_size="auto",
+                early_stopping=True,
+                hidden_layer_sizes=(100,),
+                learning_rate="adaptive",
+                learning_rate_init=0.1,
+                max_iter=5000,
+                random_state=1,
+                solver="lbfgs",
+                tol=0.0001,
+                validation_fraction=0.1,
+                verbose=False,
+                warm_start=False,
+            )
+
+        raise ValueError(f"Unknown classifier algorithm: {self.algo}")
 
     def create_model_from_training_data(self):
-        training_comments=[]
-        training_ratings=[]
+        training_comments = []
+        training_ratings = []
+
         print("Training classifier model..")
-        for sentidata in self.training_data:
-            comments = preprocess_text(sentidata.text)
-            training_comments.append(comments)
-            training_ratings.append(sentidata.rating)
 
-        # discard stopwords, apply stemming, and discard words present in less than 3 comments
-        self.vectorizer = TfidfVectorizer(tokenizer=tokenize_and_stem, sublinear_tf=True, max_df=0.5,
-                                     stop_words=mystop_words, min_df=3)
-        X_train = self.vectorizer.fit_transform(training_comments).toarray()
-        Y_train = np.array(training_ratings)
+        for item in self.training_data:
+            training_comments.append(preprocess_text(item.text))
+            training_ratings.append(item.rating)
 
-        #Apply SMOTE to improve ratio of the minority class
-        smote_model = SMOTE(ratio=0.5, random_state=None, k=None, k_neighbors=15, m=None, m_neighbors=15, out_step=.0001,
-                   kind='regular', svm_estimator=None, n_jobs=1)
+        self.vectorizer = TfidfVectorizer(
+            tokenizer=tokenize_and_stem,
+            token_pattern=None,
+            sublinear_tf=True,
+            max_df=0.5,
+            stop_words=mystop_words,
+            min_df=3,
+        )
 
-        X_resampled, Y_resampled=smote_model.fit_sample(X_train, Y_train)
+        x_train = self.vectorizer.fit_transform(training_comments).toarray()
+        y_train = np.array(training_ratings)
 
-        model=self.get_classifier()
-        model.fit(X_resampled, Y_resampled)
+        smote_model = SMOTE(sampling_strategy=0.5, k_neighbors=5)
+        x_resampled, y_resampled = smote_model.fit_resample(x_train, y_train)
+
+        model = self.get_classifier()
+        model.fit(x_resampled, y_resampled)
 
         return model
 
-    def read_data_from_oracle(self):
-        workbook = open_workbook("oracle.xlsx")
-        sheet = workbook.sheet_by_index(0)
-        oracle_data=[]
-        print("Reading data from oracle..")
-        for cell_num in range(0, sheet.nrows):
-            comments=SentimentData(sheet.cell(cell_num, 0).value,sheet.cell(cell_num, 1).value)
-            oracle_data.append(comments)
-        return  oracle_data
+    def get_sentiment_polarity(self, text: object) -> int:
+        if self.vectorizer is None:
+            raise RuntimeError("Vectorizer has not been initialized.")
+
+        comment = preprocess_text(text)
+        feature_vector = self.vectorizer.transform([comment]).toarray()
+        return int(self.model.predict(feature_vector)[0])
+
+    def get_sentiment_polarity_collection(self, texts: Iterable[object]) -> list[int]:
+        return [self.get_sentiment_polarity(text) for text in texts]
 
 
-    def get_sentiment_polarity(self,text):
-        comment=preprocess_text(text)
-        feature_vector=self.vectorizer.transform([comment]).toarray()
-        sentiment_class=self.model.predict(feature_vector)
-        return sentiment_class
-
-    def get_sentiment_polarity_collection(self,texts):
-        predictions=[]
-        for text in texts:
-            comment=preprocess_text(text)
-            feature_vector=self.vectorizer.transform([comment]).toarray()
-            sentiment_class=self.model.predict(feature_vector)
-            predictions.append(sentiment_class)
-
-        return predictions
-
-
-def ten_fold_cross_validation(dataset,ALGO):
-    kf = KFold(n_splits=10)
+def ten_fold_cross_validation(dataset: np.ndarray, algo: str, random_state: int | None = None):
+    kf = KFold(n_splits=10, shuffle=True, random_state=random_state)
 
     run_precision = []
     run_recall = []
     run_f1score = []
     run_accuracy = []
 
-    count=1
+    for count, (train, test) in enumerate(kf.split(dataset), start=1):
+        print("Using split-" + str(count) + " as test data..")
 
-    #Randomly divide the dataset into 10 partitions
-    # During each iteration one partition is used for test and remaining 9 are used for training
-    for train, test in kf.split(dataset):
-        print("Using split-"+str(count)+" as test data..")
-        classifier_model=SentiCR(algo=ALGO,training_data= dataset[train])
+        classifier_model = SentiCR(
+            algo=algo,
+            training_data=dataset[train],
+        )
 
-        test_comments=[comments.text for comments in dataset[test]]
-        test_ratings=[comments.rating for comments in dataset[test]]
+        test_comments = [item.text for item in dataset[test]]
+        test_ratings = [item.rating for item in dataset[test]]
 
-        pred = classifier_model.get_sentiment_polarity_collection(test_comments)
+        predictions = classifier_model.get_sentiment_polarity_collection(test_comments)
 
-        precision = precision_score(test_ratings, pred, pos_label=-1)
-        recall = recall_score(test_ratings, pred, pos_label=-1)
-        f1score = f1_score(test_ratings, pred, pos_label=-1)
-        accuracy = accuracy_score(test_ratings, pred)
+        precision = precision_score(test_ratings, predictions, pos_label=-1)
+        recall = recall_score(test_ratings, predictions, pos_label=-1)
+        f1score = f1_score(test_ratings, predictions, pos_label=-1)
+        accuracy = accuracy_score(test_ratings, predictions)
 
-        run_accuracy.append(accuracy)
-        run_f1score.append(f1score)
         run_precision.append(precision)
         run_recall.append(recall)
-        count+=1
+        run_f1score.append(f1score)
+        run_accuracy.append(accuracy)
 
-    return (mean(run_precision),mean(run_recall),mean(run_f1score),mean(run_accuracy))
+    return (
+        mean(run_precision),
+        mean(run_recall),
+        mean(run_f1score),
+        mean(run_accuracy),
+    )
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Supervised sentiment classifier')
 
-    parser.add_argument('--algo', type=str,
-                        help='Classification algorithm', default="GBT")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Supervised sentiment classifier")
 
+    parser.add_argument(
+        "--algo",
+        type=str,
+        default="GBT",
+        help="Classification algorithm",
+    )
 
-    parser.add_argument('--repeat', type=int,
-                        help='Iteration count', default=100)
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=100,
+        help="Iteration count",
+    )
 
     args = parser.parse_args()
-    ALGO = args.algo
-    REPEAT = args.repeat
+
+    algo = args.algo
+    repeat = args.repeat
 
     print("Cross validation")
-    print("Algrithm: " + ALGO)
-    print("Repeat: " + str(REPEAT))
+    print("Algorithm: " + algo)
+    print("Repeat: " + str(repeat))
 
-    workbook = open_workbook("oracle.xlsx")
-    sheet = workbook.sheet_by_index(0)
-    oracle_data = []
-
-    for cell_num in range(0, sheet.nrows):
-        comments = SentimentData(sheet.cell(cell_num, 0).value,sheet.cell(cell_num, 1).value)
-        oracle_data.append(comments)
-
+    oracle_data = read_oracle_data()
     random.shuffle(oracle_data)
+    oracle_data_array = np.array(oracle_data, dtype=object)
 
-    oracle_data=np.array(oracle_data)
+    precision_runs = []
+    recall_runs = []
+    fmean_runs = []
+    accuracy_runs = []
 
-    Precision = []
-    Recall = []
-    Fmean = []
-    Accuracy = []
-
-    for k in range (0,REPEAT):
+    for run_index in range(repeat):
         print(".............................")
-        print("Run# {}".format(k))
-        (precision, recall, f1score, accuracy)=ten_fold_cross_validation(oracle_data,ALGO)
-        Precision.append(precision)
-        Recall.append(recall)
-        Fmean.append(f1score)
-        Accuracy.append(accuracy)
-        print("Precision:"+str(precision))
+        print("Run# {}".format(run_index))
+
+        precision, recall, f1score, accuracy = ten_fold_cross_validation(
+            oracle_data_array,
+            algo,
+            random_state=run_index,
+        )
+
+        precision_runs.append(precision)
+        recall_runs.append(recall)
+        fmean_runs.append(f1score)
+        accuracy_runs.append(accuracy)
+
+        print("Precision:" + str(precision))
         print("Recall:" + str(recall))
         print("F-measure:" + str(f1score))
         print("Accuracy:" + str(accuracy))
 
-    ##########################
-    training = open("cross-validation-" + ALGO + ".csv", 'w')
-    training.write("Run,Algo,Precision,Recall,Fscore,Accuracy\n")
+    output_file = "cross-validation-" + algo + ".csv"
 
-    for k in range(0, REPEAT):
-        training.write(str(k) + "," + ALGO + "," + str(Precision[k]) + "," + str(Recall[k]) + "," +
-                       str(Fmean[k]) + "," + str(Accuracy[k]) + "\n")
-    training.close()
+    with open(output_file, "w", encoding="utf-8", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["Run", "Algo", "Precision", "Recall", "Fscore", "Accuracy"])
+
+        for run_index in range(repeat):
+            writer.writerow([
+                run_index,
+                algo,
+                precision_runs[run_index],
+                recall_runs[run_index],
+                fmean_runs[run_index],
+                accuracy_runs[run_index],
+            ])
 
     print("-------------------------")
-    print("Average Precision: {}".format(mean(Precision)))
-    print("Average Recall: {}".format(mean(Recall)))
-    print("Average Fmean: {}".format(mean(Fmean)))
-    print("Average Accuracy: {}".format(mean(Accuracy)))
+    print("Average Precision: {}".format(mean(precision_runs)))
+    print("Average Recall: {}".format(mean(recall_runs)))
+    print("Average Fmean: {}".format(mean(fmean_runs)))
+    print("Average Accuracy: {}".format(mean(accuracy_runs)))
     print("-------------------------")
 
+
+if __name__ == "__main__":
+    main()
